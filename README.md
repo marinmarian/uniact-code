@@ -1,3 +1,5 @@
+![alt text](https://github.com/jnnan/uniact-code/blob/main/images/framework.png?raw=true)
+
 # Server-Proxy-Client Motion Generation System
 
 This system is a three-tier architecture real-time motion generation system, consisting of three components: Server (server), Proxy (proxy), and Robot Client (robot client).
