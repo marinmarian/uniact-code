@@ -8,8 +8,6 @@
 <a href=""><img src='https://img.shields.io/badge/arXiv-UniAct-red' alt='Paper PDF'></a>
 <a href='https://jnnan.github.io/uniact'><img src='https://img.shields.io/badge/Project_Page-UniAct-green' alt='Project Page'></a>
 <a href=''><img src='https://img.shields.io/badge/Video-UniAct-yellow' alt='Video'></a>
-<!-- <a href='https://huggingface.co/spaces/depth-anything/Depth-Anything-3'><img src='https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Demo-blue'></a> -->
-<!-- <a href='https://huggingface.co/datasets/depth-anything/data'><img src='https://img.shields.io/badge/Benchmark-xxx-yellow' alt='Data'></a> -->
 
 </div>
 
@@ -27,6 +25,18 @@ This system is a three-tier architecture real-time motion generation system, con
 - [Robot Client Usage Instructions](#robot-client-usage-instructions)
 
 ---
+
+## Model Checkpoints
+
+The pretrained checkpoints for the motion generator, decoder, and tracking policy are available for download:
+
+**[Download Checkpoints (Google Drive)](https://drive.google.com/file/d/1Sagkl1N4ernbvWpnxE68XNW9xEWEOvMe/view?usp=drive_link)**
+
+The download includes:
+- `motion_generator.pt` - Motion generator model weights
+- `decoder.pt` - Decoder model weights  
+- `policy.pt` - Tracking policy model weights
+
 
 ## Server Usage Instructions
 
