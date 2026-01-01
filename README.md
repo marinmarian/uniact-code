@@ -5,9 +5,9 @@
 <br>
 &ast;Equal Contribution&emsp;&dagger;Corresponding Author
 
-<a href=""><img src='https://img.shields.io/badge/arXiv-UniAct-red' alt='Paper PDF'></a>
+<a href="https://www.arxiv.org/pdf/2512.24321"><img src='https://img.shields.io/badge/arXiv-UniAct-red' alt='Paper PDF'></a>
 <a href='https://jnnan.github.io/uniact'><img src='https://img.shields.io/badge/Project_Page-UniAct-green' alt='Project Page'></a>
-<a href=''><img src='https://img.shields.io/badge/Video-UniAct-yellow' alt='Video'></a>
+<a href='https://player.vimeo.com/video/1150342107'><img src='https://img.shields.io/badge/Video-UniAct-yellow' alt='Video'></a>
 
 </div>
 
