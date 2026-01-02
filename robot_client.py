@@ -18,7 +18,6 @@ from collections import deque
 from typing import Optional
 import json
 
-from gamepad import Gamepad, parse_remote_data
 from scipy.spatial.transform import Rotation as R
 from motion_lib.skeleton import SkeletonTree
 from motion_lib.motion_lib_h1 import MotionLibH1 as MotionLibRobot
@@ -38,10 +37,7 @@ import threading
 # ==================== Global Constant Configuration ====================
 HW_DOF = 29  # Hardware degrees of freedom (29 joints of the robot)
 
-# Feature toggle flags
-WALK_STRAIGHT = False  # Whether to use straight walking mode
-LOG_DATA = False  # Whether to log runtime data
-USE_GRIPPPER = False  # Whether to use gripper
+
 NO_MOTOR = False  # Whether to disable motors (for simulation testing only)
 
 # Load motion configuration
@@ -56,9 +52,6 @@ SIM = DEBUG  # Simulation mode synchronized with debug mode
 ONLINE_MOTION = False  # Whether to generate motions in real-time (offline loads pre-recorded motions)
 
 # Control parameters
-use_gamepad_stick = True  # Use gamepad stick input
-hist_interval_step = None  # Historical observation downsampling step size
-add_phase = False  # Whether to add phase information to observation
 use_ref_motion = True  # Whether to use reference motion trajectory
 use_future_ref = False  # Whether to use future reference frames
 
@@ -325,7 +318,6 @@ class G1():
         
         self.num_actions = 29  # Action dimension (29 joints)
         self.num_privileged_obs = None  # Privileged observations (not used during deployment)
-        self.obs_context_len = 16  # Historical observation sequence length
         
         # ========== Observation Scaling Factors ==========
         # Used to scale different physical quantities to similar numerical ranges, facilitating neural network learning
@@ -424,8 +416,6 @@ class G1():
             requires_grad=False
         )
         self.default_dof_pos = default_dof_pos.unsqueeze(0)  # [1, 29]
-
-        print(f"default_dof_pos.shape: {self.default_dof_pos.shape}")
 
         # ========== Observation Buffer ==========
         # Tensor storing current observation
@@ -560,7 +550,7 @@ class DeployNode():
         # Initialize motion library
         self._init_motion_lib()
 
-        # Reference motion total length (set to 1 hour, will actually stop when reaching end of motion library)
+        # Reference motion total length (will actually stop when reaching end of motion library)
         self._ref_motion_length = torch.tensor([36000000000.], dtype=torch.float32, device=self.env.device)
         
         if not use_ref_motion:
@@ -626,11 +616,6 @@ class DeployNode():
         # ========== Control Flags ==========
         self.Emergency_stop = False  # Emergency stop flag
         self.stop = False  # Normal stop flag
-
-        # ========== Gamepad Control ==========
-        self.gamepad = Gamepad(smooth=1.)  # Initialize gamepad
-        self.lx = 0.0  # Left stick X-axis
-        self.lr = 0.0  # Left stick Y-axis (typically used for forward/backward movement)
 
         self.walking_time = torch.zeros(1, device=self.device, dtype=torch.float64)  # Walking time
 
@@ -927,8 +912,6 @@ class DeployNode():
         - Historical observations (optional)
         """
         # ========== Get Reference Motion ==========
-        #motion_times = (self.episode_length_buf) * self.dt + self.motion_start_times
-        #motion_res_cur = self._motion_lib.get_motion_state([0], motion_times)
         motion_res_cur = self.proxy.get_motion_state()
         
         # Check if valid data is obtained, if None then wait or use previous frame data
@@ -996,22 +979,10 @@ class DeployNode():
         qj = torch.from_numpy(self.joint_pos).unsqueeze(0).to(device)  # Joint position
         dqj = torch.from_numpy(self.joint_vel).unsqueeze(0).to(device) * self.env.scale_dof_vel  # Joint velocity (scaled)
         omega = torch.from_numpy(self.obs_ang_vel).unsqueeze(0).to(device)  # Angular velocity
-        #ref_root_rot = motion_res_cur['root_rot']  # Reference root rotation
         
         # Previous step action
         action = torch.from_numpy(self.prev_action).unsqueeze(0).to(self.device)
         
-        # ========== Compute Relative Pose ==========
-        # motion_anchor_pos_b, motion_anchor_ori_b_quat = my_subtract_frame_transforms(
-        #     torch.zeros(1, 3, device=self.device),  # Current position (body frame origin)
-        #     self.quat_xyzw,  # Current pose
-        #     torch.zeros(1, 3, device=self.device),  # Reference position (body frame origin)
-        #     ref_root_rot,  # Reference pose
-        # )
-        
-        # Convert quaternion to 6D rotation representation (more suitable for neural networks)
-        #tmp_matrix = _rot.quaternion_to_matrix(motion_anchor_ori_b_quat[..., [3, 0, 1, 2]])  # [1, 3, 3]
-        #anchor_ori_6d = tmp_matrix[..., :2].reshape(-1, 6)  # Take first two columns [1, 6]
 
         # ========== Combine Observation Vector ==========
         if use_ref_motion:
@@ -1032,7 +1003,7 @@ class DeployNode():
                 # Skip recording, but output debug information
                 if len(self.motion_records_pos) > 0:
                     print(f"[Skip Record] Frame {self.episode_length_buf} (recorded {len(self.motion_records_pos)} frames, possible discontinuity)")
-            #print("ref_dqj:", ref_dqj)
+
             # Concatenate observations (version without 6D pose representation)
             cur_obs = torch.cat([
                 ref_qj,  # Reference joint position [29]
@@ -1046,27 +1017,6 @@ class DeployNode():
         else:
             pass  # Case when not using reference motion
 
-        # ========== Process Historical Observations ==========
-        hist_obs = torch.from_numpy(self.env.hist_obs).unsqueeze(0).to(self.device)
-
-        if hist_interval_step is not None:
-            # Downsample historical observations
-            hist_obs_partial = hist_obs.reshape(1, self.env.obs_context_len-1, self.env.num_observations)
-            hist_obs_partial = hist_obs_partial[:, hist_interval_step::hist_interval_step]
-            hist_obs_partial = hist_obs_partial.reshape(1, -1)
-        else:
-            hist_obs_partial = hist_obs.clone()
-
-        # Save current observation
-        self.env.obs_tensor = cur_obs.to(self.device)
-
-        # ========== Update Historical Observation Buffer ==========
-        # Observation for policy (does not include reference motion)
-        current_obs_a = torch.cat((qj, dqj, omega, self.obs_projected_gravity, action), dim=1)
-        # Rolling update history
-        hist_obs[:, 1 * self.env.num_observations:] = hist_obs[:, :-1 * self.env.num_observations].clone()
-        hist_obs[:, 0 * self.env.num_observations: 1 * self.env.num_observations] = current_obs_a.clone()
-        self.env.hist_obs = hist_obs.squeeze(0).cpu().numpy()
 
     def save_motion_records(self, file_path: Optional[str] = None):
         """
@@ -1146,9 +1096,6 @@ class DeployNode():
             pass
         try:
             while True:
-                #print(cnt)
-                loop_start_time = time.monotonic()
-                #print(cnt)
                 self._maybe_send_scheduled_prompt(cnt)
                 
                 # ========== Safety Check ==========
@@ -1163,8 +1110,7 @@ class DeployNode():
 
                 if self.start_policy:
                     # ========== 1. Get State ==========
-                    # if DEBUG and SIM:
-                        # self.lowlevel_state_mujoco()  # Get state from simulator
+                    pass
                     
                     # ========== 2. Compute Observation ==========
                     self.compute_observations()
@@ -1193,20 +1139,12 @@ class DeployNode():
                     # Compute final target angles (this is target DOF mode)
                     self.angles = actions_scaled.astype(np.float64)
 
-                    #print(actions_scaled)  # Print target angles
-
-                    # inference_time = time.monotonic() - loop_start_time
-                    # print(f"Inference time: {inference_time:.4f} seconds")
-
                     # ========== 5. Send Commands ==========
-                    if LOG_DATA:
-                        self.action_hist.append(self.prev_action)
                     
                     self.set_motor_position(self.angles)
-                    
-                    if not NO_MOTOR and not DEBUG:
+
+                    if not DEBUG:
                         # Real hardware mode: send motor commands
-                        # self.motor_pub.publish(self.cmd_msg)
                         pass
                     else:
                         # Debug mode: execute in simulator
@@ -1216,7 +1154,6 @@ class DeployNode():
                             mujoco.mj_forward(self.env.mj_model, self.env.mj_data)
                             self.env.viewer.sync()
                         else:
-                            #pass
                             #Run PD-controlled physics simulation
                             for i in range(20):  # Simulate 20 times per control step (20ms = 0.02s)
                                 self.env.viewer.sync()
@@ -1242,42 +1179,8 @@ class DeployNode():
                     if current_time > self._ref_motion_length:
                         breakpoint()
                     
-                    # Draw progress bar
-                    bar_length = 50
-                    progress = current_time / self._ref_motion_length
-                    filled_length = int(bar_length * progress)
-                    bar = '=' * filled_length + '-' * (bar_length - filled_length)
                     
-                    # Output progress bar (no newline)
-                    #sys.stdout.write(f"\rProgress: [{bar}] {int(progress * 100)}%")
-                    #sys.stdout.flush()
-                    #before_token_time = time.monotonic()
-                    # while not self.proxy.ready():
-                    #     pass
-                    #     #print("Proxy no longer ready, waiting...")
-                    #     # time.sleep(0.1)
-                    #     # continue
-                    # # else:
-                    # token = self.proxy.get_motion_state()
-                    # if token is not None:
-                    #     print(f"Received token: {token}")
-                    # else:
-                    #     print("No token available")
-                    #after_token_time = time.monotonic()-before_token_time
-                    #print(f"Token time: {after_token_time:.4f} seconds")
-
-                    # if 0.02-time.monotonic()+loop_start_time>0:
-                    #     print(f"Sleep time: {0.02-time.monotonic()+loop_start_time:.4f} seconds")
-                    #     time.sleep(0.02-time.monotonic()+loop_start_time)
-
-                    #time.sleep(0.01)
-                # ========== 7. Calculate and Display FPS ==========
                 cnt += 1
-                # if cnt == 50:
-                #     dt = (time.monotonic() - fps_ckt) / cnt
-                #     cnt = 0
-                #     fps_ckt = time.monotonic()
-                #     print(f"\nFPS: {1/dt:.2f}")
         except KeyboardInterrupt:
             #self.save_motion_records()
             raise

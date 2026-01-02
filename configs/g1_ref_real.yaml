@@ -1,5 +1,3 @@
-
-# xml_path: "assets/robots/g1/g5_yes.xml"
 xml_path: "unitree_description/mjcf/g1.xml"
 
 
@@ -7,14 +5,8 @@ policy_path: "your/path/to/motion_tracking_policy.pt"
 motion_file : 'data/motion_data/raw_walking_g1_deploy.pkl'
 
 
-# policy_path: "/home/milleret/Humanoid_robot_deployment-nan_zimo/ckpt_demo/25_08_29_22-06-30_student__push_3s__0.5__teacher_data_xndd_7_0.75_initrot_600__dagger_only_true__student_data_xndd_7_0.75_initrot_600__delta_action_rate_20__1.15kp__add_future_15model_16000.pt"
-# motion_file : 'data/motion_data/骂-骂-责骂-母亲责骂了孩子在客厅里乱丢玩具的行为_HouJingyi_Skeleton_smplx_params.pkl'
-
-# Total simulation time
 simulation_duration: 60.0
-# Simulation time step
 simulation_dt: 0.001
-# Controller update frequency (meets the requirement of simulation_dt * controll_decimation=0.02; 50Hz)
 control_decimation: 20
 
 
