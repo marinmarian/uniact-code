@@ -421,9 +421,6 @@ class G1():
         # Tensor storing current observation
         self.obs_tensor = torch.zeros(1, 151, dtype=torch.float, device=self.device, requires_grad=False)
 
-        # Numpy array storing historical observations
-        self.hist_obs = np.zeros(self.num_observations * (self.obs_context_len - 1), dtype=np.float32)
-
     def init_mujoco_viewer(self):
         """
         Initialize MuJoCo simulator and visualization window
