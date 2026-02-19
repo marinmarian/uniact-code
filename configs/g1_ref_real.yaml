@@ -1,7 +1,7 @@
 xml_path: "unitree_description/mjcf/g1.xml"
 
 
-policy_path: "/Users/marinmarian/Work/humanoid_control/uniact-code/policy.pt"
+policy_path: "./policy.pt"
 motion_file : 'data/motion_data/raw_walking_g1_deploy.pkl'
 
 

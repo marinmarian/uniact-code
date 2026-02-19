@@ -16,10 +16,13 @@ Two machines working together:
 - Storage: 150GB volume mounted at `/data`
 
 ### Steps
-1. SSH into instance
+1. SSH into instance:
+   ```bash
+   ssh -i ~/.ssh/<your-key>.pem ubuntu@<your-aws-ip>
+   ```
 2. Clone repo and move to `/data`:
    ```bash
-   git clone https://github.com/jnnan/uniact-code.git
+   git clone https://github.com/marinmarian/uniact-code.git
    cp -r ~/uniact-code /data/uniact/
    cd /data/uniact/uniact-code
    ```
@@ -46,16 +49,13 @@ Two machines working together:
    ```bash
    pip3 install mujoco imageio torch scipy omegaconf joblib numpy matplotlib easydict
    ```
-2. Download `policy.pt` directly from Google Drive:
+2. Download `policy.pt` directly from Google Drive and place it in the project root:
    ```bash
    pip3 install gdown
-   gdown "https://drive.google.com/drive/folders/1sh1IQdIjvnxx2s2did0vvZVP9DuCpoGE" --folder -O /tmp/checkpoints
-   cp /tmp/checkpoints/policy.pt /Users/marinmarian/Work/humanoid_control/uniact-code/
+   gdown --folder "https://drive.google.com/drive/folders/1sh1IQdIjvnxx2s2did0vvZVP9DuCpoGE" -O /tmp/checkpoints
+   cp /tmp/checkpoints/policy.pt /path/to/uniact-code/
    ```
-3. Set policy path in `configs/g1_ref_real.yaml`:
-   ```yaml
-   policy_path: "/Users/marinmarian/Work/humanoid_control/uniact-code/policy.pt"
-   ```
+3. `configs/g1_ref_real.yaml` already points to `./policy.pt` — no changes needed as long as you run from the project root.
 
 ---
 
@@ -63,7 +63,7 @@ Two machines working together:
 
 ### Terminal 1 — AWS server
 ```bash
-ssh -i ~/.ssh/darwin_keys.pem ubuntu@18.171.160.139
+ssh -i ~/.ssh/<your-key>.pem ubuntu@<your-aws-ip>
 cd /data/uniact/uniact-code
 source venv/bin/activate
 python server.py
@@ -71,13 +71,13 @@ python server.py
 
 ### Terminal 2 — SSH tunnel (Mac)
 ```bash
-ssh -L 8000:localhost:8000 -i ~/.ssh/darwin_keys.pem ubuntu@18.171.160.139
+ssh -L 8000:localhost:8000 -i ~/.ssh/<your-key>.pem ubuntu@<your-aws-ip>
 ```
 Keep this open — it forwards port 8000 from Mac to AWS.
 
 ### Terminal 3 — Simulation (Mac)
 ```bash
-cd /Users/marinmarian/Work/humanoid_control/uniact-code
+cd /path/to/uniact-code
 mjpython robot_client.py
 ```
 
