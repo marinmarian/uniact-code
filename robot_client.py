@@ -27,6 +27,11 @@ import joblib
 
 import mujoco
 import mujoco.viewer
+import imageio
+
+RECORD_VIDEO = False  # Set True for headless (AWS), False for local with display
+VIDEO_PATH = "simulation_output.mp4"
+VIDEO_FPS = 50
 
 import torch_jit_utils as _rot
 
@@ -233,11 +238,11 @@ def add_visual_capsule(scene, point1, point2, radius, rgba):
     )
     
     # Connect two points to create capsule
-    mujoco.mjv_makeConnector(
+    mujoco.mjv_connector(
         scene.geoms[scene.ngeom-1],
         mujoco.mjtGeom.mjGEOM_CAPSULE, radius,
-        point1[0], point1[1], point1[2],
-        point2[0], point2[1], point2[2]
+        np.array(point1, dtype=np.float64),
+        np.array(point2, dtype=np.float64)
     )
 
 
@@ -423,27 +428,50 @@ class G1():
 
     def init_mujoco_viewer(self):
         """
-        Initialize MuJoCo simulator and visualization window
-        Only used in DEBUG mode
+        Initialize MuJoCo simulator and visualization
+        Supports both interactive viewer (local) and offscreen rendering (headless/AWS)
         """
         # Load MuJoCo model from XML file
         self.mj_model = mujoco.MjModel.from_xml_path(HUMANOID_XML)
         self.mj_data = mujoco.MjData(self.mj_model)
         self.mj_model.opt.timestep = 0.001  # Set simulation timestep to 1ms
 
-        # Launch passive window (does not take over main loop)
-        self.viewer = mujoco.viewer.launch_passive(self.mj_model, self.mj_data)
+        if RECORD_VIDEO:
+            # Headless offscreen rendering
+            self.renderer = mujoco.Renderer(self.mj_model, height=720, width=1280)
+            self.video_writer = imageio.get_writer(VIDEO_PATH, fps=VIDEO_FPS)
+            self.video_frame_count = 0
+            self.viewer = None  # No interactive viewer
+        else:
+            # Interactive viewer (requires display)
+            self.viewer = mujoco.viewer.launch_passive(self.mj_model, self.mj_data)
+            self.renderer = None
+            self.video_writer = None
 
-        # Add 28 visualization capsules (for debugging visualization)
-        for _ in range(28):
-            add_visual_capsule(
-                self.viewer.user_scn, 
-                np.zeros(3), 
-                np.array([0.001, 0, 0]), 
-                0.05, 
-                np.array([0, 1, 0, 1])  # Green
-            )
-        self.viewer.user_scn.geoms[27].pos = [0, 0, 0]
+            # Add 28 visualization capsules (for debugging visualization)
+            for _ in range(28):
+                add_visual_capsule(
+                    self.viewer.user_scn,
+                    np.zeros(3),
+                    np.array([0.001, 0, 0]),
+                    0.05,
+                    np.array([0, 1, 0, 1])  # Green
+                )
+            self.viewer.user_scn.geoms[27].pos = [0, 0, 0]
+
+    def render_offscreen(self):
+        """Render one frame to the video file"""
+        if self.renderer is not None and self.video_writer is not None:
+            self.renderer.update_scene(self.mj_data)
+            frame = self.renderer.render()
+            self.video_writer.append_data(frame)
+            self.video_frame_count += 1
+
+    def close_video(self):
+        """Finalize and save the video file"""
+        if self.video_writer is not None:
+            self.video_writer.close()
+            print(f"Video saved to {VIDEO_PATH} ({self.video_frame_count} frames)")
 
 
 def pd_control(target_q, q, kp, target_dq, dq, kd):
@@ -579,7 +607,10 @@ class DeployNode():
             # Execute one simulation step
             mujoco.mj_step(self.env.mj_model, self.env.mj_data)
             self.joint_tau = tau
-            self.env.viewer.sync()################################################3
+            if RECORD_VIDEO:
+                self.env.render_offscreen()
+            elif self.env.viewer is not None:
+                self.env.viewer.sync()
 
         # ========== Status Flags ==========
         self.stand_up = True  # Whether in standing-up phase
@@ -909,6 +940,7 @@ class DeployNode():
         - Historical observations (optional)
         """
         # ========== Get Reference Motion ==========
+        device = self.device
         motion_res_cur = self.proxy.get_motion_state()
         
         # Check if valid data is obtained, if None then wait or use previous frame data
@@ -1151,25 +1183,32 @@ class DeployNode():
                             # Only set joint positions, do not run physics
                             self.env.mj_data.qpos[7:] = self.angles
                             mujoco.mj_forward(self.env.mj_model, self.env.mj_data)
-                            self.env.viewer.sync()
+                            if RECORD_VIDEO:
+                                self.env.render_offscreen()
+                            elif self.env.viewer is not None:
+                                self.env.viewer.sync()
                         else:
                             #Run PD-controlled physics simulation
                             for i in range(20):  # Simulate 20 times per control step (20ms = 0.02s)
-                                self.env.viewer.sync()
-                                
+                                if not RECORD_VIDEO and self.env.viewer is not None:
+                                    self.env.viewer.sync()
+
                                 # Compute PD control torque
                                 tau = pd_control(
-                                    self.angles, 
-                                    self.env.mj_data.qpos[7:], 
+                                    self.angles,
+                                    self.env.mj_data.qpos[7:],
                                     self.env.p_gains,
-                                    np.zeros(self.env.num_actions), 
-                                    self.env.mj_data.qvel[6:], 
+                                    np.zeros(self.env.num_actions),
+                                    self.env.mj_data.qvel[6:],
                                     self.env.d_gains
                                 )
 
                                 self.env.mj_data.ctrl[:] = tau
                                 # Execute physics simulation step
                                 mujoco.mj_step(self.env.mj_model, self.env.mj_data)
+                            # Render one frame per control step (50 Hz) for video
+                            if RECORD_VIDEO:
+                                self.env.render_offscreen()
                     
                     
                     current_time = self.episode_length_buf * self.dt + self.motion_start_times
@@ -1182,6 +1221,8 @@ class DeployNode():
                 cnt += 1
         except KeyboardInterrupt:
             #self.save_motion_records()
+            if RECORD_VIDEO:
+                self.env.close_video()
             raise
 
 
