@@ -46,9 +46,11 @@ Two machines working together:
    ```bash
    pip3 install mujoco imageio torch scipy omegaconf joblib numpy matplotlib easydict
    ```
-2. Copy `policy.pt` from AWS:
+2. Download `policy.pt` directly from Google Drive:
    ```bash
-   scp -i ~/.ssh/darwin_keys.pem ubuntu@18.171.160.139:/data/checkpoints/policy.pt /Users/marinmarian/Work/humanoid_control/uniact-code/
+   pip3 install gdown
+   gdown "https://drive.google.com/drive/folders/1sh1IQdIjvnxx2s2did0vvZVP9DuCpoGE" --folder -O /tmp/checkpoints
+   cp /tmp/checkpoints/policy.pt /Users/marinmarian/Work/humanoid_control/uniact-code/
    ```
 3. Set policy path in `configs/g1_ref_real.yaml`:
    ```yaml
