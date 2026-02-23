@@ -11,6 +11,8 @@ import os
 import argparse
 import numpy as np
 import torch
+from dotenv import load_dotenv
+load_dotenv()
 import faulthandler
 import matplotlib.pyplot as plt
 import time
@@ -1251,12 +1253,22 @@ if __name__ == "__main__":
         help='Use command line input mode, do not read from file (default: False)',
         default=False
     )
+    parser.add_argument(
+        '--use_livekit',
+        action='store_true',
+        help='Receive motion commands from Darwin voice agent via LiveKit RPC',
+        default=False
+    )
     args = parser.parse_args()
     
     # Determine which mode to use:
     # If both parameters are specified, command line mode takes priority
     # If neither is specified, default to file mode
-    if args.use_commandline:
+    use_livekit = args.use_livekit
+    if use_livekit:
+        use_text_file = False
+        print("[Config] Using LiveKit RPC mode (Darwin voice agent)")
+    elif args.use_commandline:
         use_text_file = False
         print("[Config] Using command line input mode")
     elif args.use_text_file:
@@ -1279,7 +1291,7 @@ if __name__ == "__main__":
         'use_text_file': use_text_file  # Add text file mode configuration
     }
     # Create deployment node
-    dp_node = DeployNode(args.task_name,config=config)
+    dp_node = DeployNode(args.task_name, config=config)
     try:
         # Connect to proxy
         if not dp_node.connect():
@@ -1287,6 +1299,19 @@ if __name__ == "__main__":
             raise Exception(f"Failed to connect to proxy")
     except Exception as e:
         print(f"Client error: {e}")
+
+    # Start LiveKit bridge in background if requested
+    if use_livekit:
+        from livekit_bridge import LiveKitBridge
+        bridge = LiveKitBridge(
+            proxy=dp_node.proxy,
+            livekit_url=os.environ["LIVEKIT_URL"],
+            api_key=os.environ["LIVEKIT_API_KEY"],
+            api_secret=os.environ["LIVEKIT_API_SECRET"],
+            room_name=os.environ.get("ROOM_NAME", "darwin-robot"),
+            identity=os.environ.get("ROBOT_PARTICIPANT_IDENTITY", "robot123987"),
+        )
+        bridge.start_in_background()
 
     # Run main loop
     dp_node.main_loop()
