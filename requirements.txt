@@ -1,3 +1,7 @@
+# LiveKit bridge
+livekit>=1.0.0
+python-dotenv>=1.0.0
+
 numpy==2.2.6
 torch==2.8.0
 torchaudio==2.8.0
