@@ -56,7 +56,7 @@ START_IDX_50FPS = 5196  # Motion start frame index at 50Hz frequency
 
 SIM = DEBUG  # Simulation mode synchronized with debug mode
 
-ONLINE_MOTION = False  # Whether to generate motions in real-time (offline loads pre-recorded motions)
+ONLINE_MOTION = True  # Whether to generate motions in real-time (offline loads pre-recorded motions)
 
 # Control parameters
 use_ref_motion = True  # Whether to use reference motion trajectory
