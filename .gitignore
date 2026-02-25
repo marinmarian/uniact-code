@@ -1,6 +1,7 @@
 checkpoints
 *.pt
 motion_records.npy
+.DS_Store
 
 __pycache__/
 
