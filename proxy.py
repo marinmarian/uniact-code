@@ -208,7 +208,7 @@ class MotionProxy:
                 # 先把即將被client讀取的token放入滑動窗口，用於之後生成時回溯
                 token = self.token_queue[0]
                 if token == 0:
-                    print("插值")
+                    pass
                 if self.generate_token_window is not None:
                     self.generate_token_window.append(token)
                 self.token_queue.popleft()
@@ -406,7 +406,7 @@ class MotionProxy:
                                     self.need_interpolation = False
                                 else:
                                     # 隊列為空，無法進行插值
-                                    print(f"隊列為空，跳過插值")
+                                    pass  # Queue empty, skip interpolation
                                     # 標記插值已完成（因為無法插值）
                                     self.need_interpolation = False
                             
