@@ -1,4 +1,6 @@
 checkpoints
+*.pt
+motion_records.npy
 
 __pycache__/
 
