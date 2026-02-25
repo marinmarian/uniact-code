@@ -400,7 +400,7 @@ class MotionProxy:
                                     self.token_queue.append(first_token)
                                     self.dict_queue.append(updated_dict_end)
                                     
-                                    print(f"插值完成：在最後一個dict和新第一個dict之間插入了20個dict，並插入了更新後的dict_end（使用第一個新token）")
+                                    pass
                                     # 標記插值已完成
                                     interpolation_done = True
                                     self.need_interpolation = False
