@@ -1,5 +1,6 @@
 checkpoints
 *.pt
+*.mp4
 motion_records.npy
 .DS_Store
 
