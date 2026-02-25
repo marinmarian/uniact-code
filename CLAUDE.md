@@ -87,9 +87,20 @@ Two orderings exist: **BYD** (training) and **MuJoCo** (simulation). Index mappi
 - `.env` (from `.env.example`): LiveKit credentials (gitignored)
 
 ### Simulation flags (top of `robot_client.py`)
-- `RECORD_VIDEO`: True for headless AWS, False for Mac (live viewer)
+- `RECORD_VIDEO`: True for headless AWS, False for Mac (live viewer). Outputs `simulation_output.mp4`
 - `ONLINE_MOTION`: True = server-generated, False = pre-recorded pkl
 - `DEBUG`/`SIM`: True = MuJoCo sim, False = real hardware
+
+### Video recording (`RECORD_VIDEO = True`)
+- 1280x720 H.264 (yuv420p) at 50fps, QuickTime-compatible
+- Tracking camera follows the robot pelvis (azimuth 135, elevation -20, distance 3.0)
+- Current text prompt overlaid at bottom center (white text, black outline) via cv2
+- Requires `opencv-python` and `imageio[ffmpeg]`
+
+### Text schedule files
+- `text.jsonl`: Main prompt schedule read by the client (tracked in git)
+- `text_*.jsonl`: Preset schedules (actions, gestures, running, walking) — gitignored
+- Format: `{"frame": <int>, "text": "<prompt>"}` per line, sorted by frame
 
 ### Runtime config (robot_client.py `main()`)
 - `ready_threshold` (30): tokens buffered before starting
