@@ -2,6 +2,7 @@ checkpoints
 *.pt
 *.mp4
 motion_records.npy
+text_*.jsonl
 .DS_Store
 
 __pycache__/
