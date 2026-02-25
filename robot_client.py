@@ -25,13 +25,14 @@ from motion_lib.skeleton import SkeletonTree
 from motion_lib.motion_lib_h1 import MotionLibH1 as MotionLibRobot
 from omegaconf import OmegaConf
 import sys
+import cv2
 import joblib
 
 import mujoco
 import mujoco.viewer
 import imageio
 
-RECORD_VIDEO = False  # Set True for headless (AWS), False for local with display
+RECORD_VIDEO = True  # Set True for headless (AWS), False for local with display
 VIDEO_PATH = "simulation_output.mp4"
 VIDEO_FPS = 50
 
@@ -440,10 +441,22 @@ class G1():
 
         if RECORD_VIDEO:
             # Headless offscreen rendering
+            self.mj_model.vis.global_.offwidth = 1280
+            self.mj_model.vis.global_.offheight = 720
             self.renderer = mujoco.Renderer(self.mj_model, height=720, width=1280)
-            self.video_writer = imageio.get_writer(VIDEO_PATH, fps=VIDEO_FPS)
+            self.video_writer = imageio.get_writer(
+                VIDEO_PATH, fps=VIDEO_FPS, codec='libx264',
+                output_params=['-pix_fmt', 'yuv420p']
+            )
             self.video_frame_count = 0
             self.viewer = None  # No interactive viewer
+            # Camera that tracks the robot
+            self.video_cam = mujoco.MjvCamera()
+            self.video_cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+            self.video_cam.trackbodyid = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_BODY, "pelvis")
+            self.video_cam.distance = 3.0
+            self.video_cam.azimuth = 135
+            self.video_cam.elevation = -20
         else:
             # Interactive viewer (requires display)
             self.viewer = mujoco.viewer.launch_passive(self.mj_model, self.mj_data)
@@ -461,11 +474,21 @@ class G1():
                 )
             self.viewer.user_scn.geoms[27].pos = [0, 0, 0]
 
-    def render_offscreen(self):
+    def render_offscreen(self, prompt_text=""):
         """Render one frame to the video file"""
         if self.renderer is not None and self.video_writer is not None:
-            self.renderer.update_scene(self.mj_data)
+            self.renderer.update_scene(self.mj_data, self.video_cam)
             frame = self.renderer.render()
+            if prompt_text:
+                frame = frame.copy()
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                scale = 0.8
+                thickness = 2
+                text_size = cv2.getTextSize(prompt_text, font, scale, thickness)[0]
+                x = (frame.shape[1] - text_size[0]) // 2
+                y = frame.shape[0] - 30
+                cv2.putText(frame, prompt_text, (x, y), font, scale, (0, 0, 0), thickness + 2, cv2.LINE_AA)
+                cv2.putText(frame, prompt_text, (x, y), font, scale, (255, 255, 255), thickness, cv2.LINE_AA)
             self.video_writer.append_data(frame)
             self.video_frame_count += 1
 
@@ -587,6 +610,8 @@ class DeployNode():
             self.stick_input = self.motion_data['stick_input_xy'] if 'stick_input_xy' in self.motion_data else np.zeros((1, 2), dtype=np.float32)
             self.stick_input = torch.from_numpy(self.stick_input).to(self.device, dtype=torch.float64)
 
+        self.current_prompt = ""
+
         # ========== Debug Mode Initialization ==========
         if DEBUG:
             # Initialize MuJoCo visualization
@@ -597,7 +622,7 @@ class DeployNode():
 
             # Compute initial PD control torque
             tau = pd_control(
-                self.motion_res['dof_pos'][0].cpu().numpy(), 
+                self.angles,
                 self.env.mj_data.qpos[7:], 
                 self.env.p_gains,
                 np.zeros(self.env.num_actions), 
@@ -610,7 +635,7 @@ class DeployNode():
             mujoco.mj_step(self.env.mj_model, self.env.mj_data)
             self.joint_tau = tau
             if RECORD_VIDEO:
-                self.env.render_offscreen()
+                self.env.render_offscreen(self.current_prompt)
             elif self.env.viewer is not None:
                 self.env.viewer.sync()
 
@@ -745,6 +770,7 @@ class DeployNode():
             try:
                 print(f"[text] frame={target_frame} sending text command: {text}")
                 self.proxy.send_start_command(text)
+                self.current_prompt = text
             except Exception as exc:
                 print(f"[text] Failed to send text command: {exc}")
             finally:
@@ -947,7 +973,6 @@ class DeployNode():
         
         # Check if valid data is obtained, if None then wait or use previous frame data
         if motion_res_cur is None:
-            print(f"Warning: motion_state is None for frame {self.episode_length_buf}")
             # Wait a short time then retry, maximum 3 retries
             max_retries = 3
             retry_count = 0
@@ -955,11 +980,13 @@ class DeployNode():
                 time.sleep(0.001)  # Wait 1ms
                 motion_res_cur = self.proxy.get_motion_state()
                 retry_count += 1
-            
+
             if motion_res_cur is None:
                 # If still None after retry, use previous frame data (if exists)
                 if len(self.motion_records_pos) > 0:
-                    print(f"Retry failed, using previous frame data (recorded {len(self.motion_records_pos)} frames), skipping record")
+                    if not hasattr(self, '_none_warned') or not self._none_warned:
+                        print(f"Warning: motion_state is None, using previous frame data (will suppress further warnings)")
+                        self._none_warned = True
                     # If there were previous records, use the last frame's data as current frame (for control, but don't record)
                     ref_qj = torch.from_numpy(self.motion_records_pos[-1]).unsqueeze(0).to(self.device)
                     ref_dqj = torch.from_numpy(self.motion_records_vel[-1]).unsqueeze(0).to(self.device) * self.env.scale_dof_vel
@@ -994,7 +1021,52 @@ class DeployNode():
                 device=device,
             ) * self.env.scale_dof_vel  # Reference joint velocity
 
-        
+            # Clamp arm joint references to prevent autoregressive drift
+            # MuJoCo order indices 15-28 are arm joints (left arm 15-21, right arm 22-28)
+            # Limits from MJCF model, tightened to typical walking range
+            arm_clamp_min = torch.tensor([
+                -3.09,  # left_shoulder_pitch  (MJCF: -3.0892)
+                -1.59,  # left_shoulder_roll   (MJCF: -1.5882)
+                -2.62,  # left_shoulder_yaw    (MJCF: -2.618)
+                -1.05,  # left_elbow           (MJCF: -1.0472)
+                -1.97,  # left_wrist_roll      (MJCF: -1.97222)
+                -1.61,  # left_wrist_pitch     (MJCF: -1.61443)
+                -1.61,  # left_wrist_yaw       (MJCF: -1.61443)
+                -3.09,  # right_shoulder_pitch (MJCF: -3.0892)
+                -2.25,  # right_shoulder_roll  (MJCF: -2.2515)
+                -2.62,  # right_shoulder_yaw   (MJCF: -2.618)
+                -1.05,  # right_elbow          (MJCF: -1.0472)
+                -1.97,  # right_wrist_roll     (MJCF: -1.97222)
+                -1.61,  # right_wrist_pitch    (MJCF: -1.61443)
+                -1.61,  # right_wrist_yaw      (MJCF: -1.61443)
+            ], dtype=torch.float32, device=device)
+            arm_clamp_max = torch.tensor([
+                2.67,   # left_shoulder_pitch  (MJCF: 2.6704)
+                2.25,   # left_shoulder_roll   (MJCF: 2.2515)
+                2.62,   # left_shoulder_yaw    (MJCF: 2.618)
+                2.09,   # left_elbow           (MJCF: 2.0944)
+                1.97,   # left_wrist_roll      (MJCF: 1.97222)
+                1.61,   # left_wrist_pitch     (MJCF: 1.61443)
+                1.61,   # left_wrist_yaw       (MJCF: 1.61443)
+                2.67,   # right_shoulder_pitch (MJCF: 2.6704)
+                1.59,   # right_shoulder_roll  (MJCF: 1.5882)
+                2.62,   # right_shoulder_yaw   (MJCF: 2.618)
+                2.09,   # right_elbow          (MJCF: 2.0944)
+                1.97,   # right_wrist_roll     (MJCF: 1.97222)
+                1.61,   # right_wrist_pitch    (MJCF: 1.61443)
+                1.61,   # right_wrist_yaw      (MJCF: 1.61443)
+            ], dtype=torch.float32, device=device)
+            ref_qj[:, 15:] = torch.clamp(ref_qj[:, 15:], arm_clamp_min, arm_clamp_max)
+
+            # Smooth arm joints with exponential moving average to reduce erratic motion
+            if not hasattr(self, '_prev_arm_ref'):
+                self._prev_arm_ref = ref_qj[:, 15:].clone()
+            else:
+                alpha = 0.3  # Smoothing factor: 0=fully smoothed, 1=no smoothing
+                ref_qj[:, 15:] = alpha * ref_qj[:, 15:] + (1 - alpha) * self._prev_arm_ref
+                self._prev_arm_ref = ref_qj[:, 15:].clone()
+
+
         num_records = len(self.motion_records_pos)
         if (
             self.motion_records_interval > 0
@@ -1033,7 +1105,7 @@ class DeployNode():
             else:
                 # Skip recording, but output debug information
                 if len(self.motion_records_pos) > 0:
-                    print(f"[Skip Record] Frame {self.episode_length_buf} (recorded {len(self.motion_records_pos)} frames, possible discontinuity)")
+                    pass  # Skip record (motion_state was None)
 
             # Concatenate observations (version without 6D pose representation)
             cur_obs = torch.cat([
@@ -1186,7 +1258,7 @@ class DeployNode():
                             self.env.mj_data.qpos[7:] = self.angles
                             mujoco.mj_forward(self.env.mj_model, self.env.mj_data)
                             if RECORD_VIDEO:
-                                self.env.render_offscreen()
+                                self.env.render_offscreen(self.current_prompt)
                             elif self.env.viewer is not None:
                                 self.env.viewer.sync()
                         else:
@@ -1210,7 +1282,7 @@ class DeployNode():
                                 mujoco.mj_step(self.env.mj_model, self.env.mj_data)
                             # Render one frame per control step (50 Hz) for video
                             if RECORD_VIDEO:
-                                self.env.render_offscreen()
+                                self.env.render_offscreen(self.current_prompt)
                     
                     
                     current_time = self.episode_length_buf * self.dt + self.motion_start_times
