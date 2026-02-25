@@ -38,7 +38,7 @@ Two machines working together:
    gdown --folder "https://drive.google.com/drive/folders/1sh1IQdIjvnxx2s2did0vvZVP9DuCpoGE" -O /data/checkpoints
    ```
 5. Configure `server.py`:
-   - Set `MODEL_PATH = "/data/checkpoints/motion-genorator"` in `main()`
+   - Set `MODEL_PATH = "/data/checkpoints/motion-generator"` in `main()`
    - Set `self.decoder = torch.jit.load('/data/checkpoints/decoder.pt')`
 
 ---
@@ -47,14 +47,14 @@ Two machines working together:
 
 1. Install dependencies:
    ```bash
-   pip3 install mujoco imageio torch scipy omegaconf joblib numpy matplotlib easydict
+   pip3 install -r requirements.txt
    ```
-2. Download `policy.pt` directly from Google Drive and place it in the project root:
+2. Download `policy.pt` from Google Drive and place it in the project root:
    ```bash
    pip3 install gdown
-   gdown --folder "https://drive.google.com/drive/folders/1sh1IQdIjvnxx2s2did0vvZVP9DuCpoGE" -O /tmp/checkpoints
-   cp /tmp/checkpoints/policy.pt /path/to/uniact-code/
+   gdown "https://drive.google.com/drive/folders/1sh1IQdIjvnxx2s2did0vvZVP9DuCpoGE" -O policy.pt
    ```
+   Or download manually from [Google Drive](https://drive.google.com/drive/folders/1sh1IQdIjvnxx2s2did0vvZVP9DuCpoGE) and place `policy.pt` in the project root.
 3. `configs/g1_ref_real.yaml` already points to `./policy.pt` — no changes needed as long as you run from the project root.
 
 ---
