@@ -65,24 +65,29 @@ The key insight: the LLM generates "ideal" motion, but real physics requires cor
 - Decodes tokens into joint pos/vel using FSQ quantizer + TorchScript decoder
 - Uses `infer_robot.py` for generation (KV-cache, position encoding, token parsing)
 
-### `livekit_voice_agent.py` — Voice Pipeline Agent
-- LiveKit Agents SDK (1.x) voice pipeline: STT (OpenAI Whisper) → LLM (GPT-4o-mini) → TTS (OpenAI)
+### `livekit_voice_agent.py` — Michelangelo Voice Agent
+- LiveKit Agents SDK (1.x) voice pipeline: STT (OpenAI Whisper) → LLM (GPT-4o) → TTS (OpenAI, "fable" voice)
 - Silero VAD for voice activity detection
-- Single function tool: `perform_motion(motion_description)` — sends RPC to the robot participant
-- Run with `python livekit_voice_agent.py dev`
+- Personality: Michelangelo — silly, relaxed, philosophical humanoid robot built by Toqan
+- Natural voice style with fillers, casual transitions, no asterisks/stage directions
+- Function tool: `perform_motion(motion_description, duration)` — sends RPC to the robot participant
+  - `duration="short"` (5s): quick gestures like wave, clap, bow
+  - `duration="long"` (20s): sustained motions like walking, boxing, dancing
+- Graceful fallback: works in console mode (no room) and when robot is offline
+- Run with `python livekit_voice_agent.py dev` (or `console` for text-only testing)
 - Requires `OPENAI_API_KEY` in `.env`
 
 ### `livekit_bridge.py` — Voice Agent Bridge
-- Joins a LiveKit room as the robot participant (`robot123987` by default)
-- Registers `perform_motion` RPC handler — accepts free-form text descriptions
-- Calls `proxy.send_start_command(description)` to trigger motion
+- Auto-discovers active LiveKit room (polls for rooms with 2+ participants)
+- No hardcoded room name — joins whatever room the playground creates
+- Registers `perform_motion` RPC handler — accepts JSON `{motion, duration}`
+- Motion lifecycle: sends prompt → re-sends every 5s to keep motion alive → after duration expires, switches to "stand still" on repeat → new motion cancels idle loop
 - Calls `on_prompt` callback to update video overlay text
 - Runs in a daemon thread with its own asyncio event loop — does not block the main control loop
 - Credentials loaded from `.env` (gitignored)
 
 ### `livekit_connect.py` — Connection Helper
-- Generates a playground token for the LiveKit room
-- Dispatches the voice agent to the room via LiveKit API
+- Dispatches the voice agent to a room via LiveKit API
 - Run with `python livekit_connect.py`
 
 ### `proxy.py` — Token Buffer/Interpolator
