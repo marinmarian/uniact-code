@@ -8,3 +8,4 @@ text_*.jsonl
 __pycache__/
 
 .env
+demo_script.md
