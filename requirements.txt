@@ -2,6 +2,11 @@
 livekit>=1.0.0
 python-dotenv>=1.0.0
 
+# LiveKit voice agent (only needed for livekit_voice_agent.py)
+livekit-agents>=1.4
+livekit-plugins-openai>=1.0
+livekit-plugins-silero>=1.0
+
 numpy==2.2.6
 torch==2.8.0
 torchaudio==2.8.0

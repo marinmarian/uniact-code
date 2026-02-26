@@ -180,54 +180,52 @@ motion_file: './data/motion_data/raw_walking_g1_deploy.pkl'
 python robot_client.py
 ```
 
-### 4. Instruction Reception Mode Switching
+### 4. Instruction Reception Modes
 
-Robot Client supports two modes for receiving instructions:
+Robot Client supports three modes for receiving instructions:
 
 #### 4.1 File Mode (Default)
 
 Automatically reads and sends instructions from the `text.jsonl` file.
 
-**Usage:**
 ```bash
-# Default mode (file mode)
 python robot_client.py
-
-# Or explicitly specify
-python robot_client.py --use_text_file
 ```
 
-**File Format Requirements:**
-
-Create a `text.jsonl` file in the project root directory, formatted as JSON Lines (one JSON object per line):
-
+Create `text.jsonl` in the project root (JSON Lines format):
 ```json
 {"frame": 0, "text": "walk forward"}
 {"frame": 100, "text": "turn left"}
 {"frame": 200, "text": "stop"}
 ```
 
-- `frame`: Integer, specifies at which frame to send this instruction (frame count starts from 0)
-- `text`: String, instruction text content
-
-**Workflow:**
-1. The program reads the `text.jsonl` file at startup
-2. In the main loop, when the frame count reaches the specified `frame` value, it automatically sends the corresponding instruction
-3. Instructions are executed in ascending order of `frame` values
+- `frame`: at which frame to send this instruction (frame count starts from 0)
+- `text`: instruction text content
 
 #### 4.2 Command Line Mode
 
-Interactively input instructions through the command line.
-
-**Usage:**
 ```bash
 python robot_client.py --use_commandline
 ```
 
-**Supported Commands:**
-- `start <prompt>`: Start generating motion, e.g., `start walk forward`
-- `stop`: Stop generation
-- `quit`: Exit the program
+Commands: `start <prompt>`, `stop`, `quit`
+
+#### 4.3 Voice Agent Mode (LiveKit)
+
+Speak natural language commands through a browser. Requires LiveKit + OpenAI credentials in `.env`.
+
+```bash
+# Terminal A: Voice agent
+python livekit_voice_agent.py dev
+
+# Terminal B: Robot client + bridge
+mjpython robot_client.py --use_livekit
+
+# Terminal C: Generate token + dispatch agent
+python livekit_connect.py
+```
+
+Open https://agents-playground.livekit.io, use Custom connect with the URL + token from `livekit_connect.py`, then speak commands like "wave hello" or "walk forward".
 
 ### 5. Runtime Configuration Parameters
 

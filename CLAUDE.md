@@ -25,6 +25,19 @@ mjpython robot_client.py --use_livekit      # LiveKit voice agent mode
 MUJOCO_GL=egl python robot_client.py
 ```
 
+### LiveKit voice agent setup
+```bash
+# Terminal 1: SSH into AWS, run server.py
+# Terminal 2: SSH tunnel: ssh -L 8000:localhost:8000 -i <key> ubuntu@<aws-ip>
+# Terminal 3: Voice agent (Mac or anywhere with OPENAI_API_KEY)
+python livekit_voice_agent.py dev
+# Terminal 4: Robot client + bridge (Mac)
+mjpython robot_client.py --use_livekit
+# Terminal 5: Generate playground token + dispatch agent
+python livekit_connect.py
+# Browser: paste URL + token into https://agents-playground.livekit.io (Custom connect)
+```
+
 ### Distributed setup (server on AWS, client on Mac)
 ```bash
 # Terminal 1: SSH into AWS, run server.py
@@ -39,8 +52,9 @@ python3 benchmark_t2m.py  # Evaluates 66 text-to-motion samples in t2m/
 
 ### Dependencies
 ```bash
-pip install -r requirements.txt          # Client (mujoco, torch, livekit)
-pip install -r requirements_qwen.txt     # Server (Qwen VL, CUDA, transformers)
+pip install -r requirements.txt                      # Client (mujoco, torch, livekit)
+pip install -r requirements_qwen.txt                 # Server (Qwen VL, CUDA, transformers)
+pip install "livekit-agents[openai,silero]>=1.4"     # Voice agent (STT/LLM/TTS)
 ```
 
 Python 3.11+ required.
@@ -48,13 +62,17 @@ Python 3.11+ required.
 ## Architecture
 
 ```
-text.jsonl / CLI / LiveKit gesture RPC
+text.jsonl / CLI / Voice Agent
     ↓
 server.py (GPU)     ← Qwen 2.5 VL → FSQ motion tokens (autoregressively)
     ↓ TCP :8000
 proxy.py (buffer)   ← Token queue, sliding window, 40-frame interpolation on prompt switch
     ↓ local
 robot_client.py     ← 50Hz: 151D obs → RL policy (policy.pt) → 29D action → PD control → MuJoCo 1kHz
+
+Voice agent flow (LiveKit mode):
+User (browser mic) → LiveKit Cloud → livekit_voice_agent.py (STT→LLM→TTS)
+    → perform_motion RPC → livekit_bridge.py → proxy.send_start_command() → server.py → MuJoCo
 ```
 
 ### Key data flow
@@ -73,7 +91,9 @@ Two orderings exist: **BYD** (training) and **MuJoCo** (simulation). Index mappi
 | `robot_client.py` | Main controller: G1 class (PD control, MuJoCo), DeployNode (50Hz loop) |
 | `server.py` | MotionServer: Qwen LLM inference, FSQ decode, TCP socket |
 | `proxy.py` | MotionProxy: token buffer, interpolation, queue management |
-| `livekit_bridge.py` | LiveKitBridge: gesture RPC → text prompt (daemon thread, asyncio) |
+| `livekit_voice_agent.py` | Voice pipeline agent: STT/LLM/TTS via OpenAI, perform_motion RPC tool |
+| `livekit_bridge.py` | LiveKitBridge: perform_motion RPC → proxy (daemon thread, asyncio) |
+| `livekit_connect.py` | Helper: generates playground token + dispatches agent to room |
 | `infer_robot.py` | LLM inference utilities: KV-cache, special token handling (IDs start at 129,627) |
 | `infer_fsq_ar.py` | TokenDecoder: FSQ autoregressive decode with 8-code sliding window |
 | `fsq.py` | FSQ module: levels [8,8,8,6,5] = 15,360 codes, straight-through gradients |
@@ -84,7 +104,7 @@ Two orderings exist: **BYD** (training) and **MuJoCo** (simulation). Index mappi
 ### Paths to configure before running
 - `server.py`: `MODEL_PATH` (Qwen weights dir) and decoder path (`torch.jit.load`)
 - `configs/g1_ref_real.yaml`: `xml_path`, `policy_path`, `motion_file`
-- `.env` (from `.env.example`): LiveKit credentials (gitignored)
+- `.env` (from `.env.example`): LiveKit credentials + `OPENAI_API_KEY` (gitignored)
 
 ### Simulation flags (top of `robot_client.py`)
 - `RECORD_VIDEO`: True for headless AWS, False for Mac (live viewer). Outputs `simulation_output.mp4`

@@ -1,9 +1,9 @@
 """
 LiveKit <-> UniAct Bridge
 
-Joins the LiveKit room as the robot participant (robot123987), receives RPC
-gesture commands from the Darwin voice agent, translates them to plain-English
-motion prompts, and forwards them to the UniAct MotionProxy.
+Joins the LiveKit room as the robot participant (robot123987), receives
+perform_motion RPC calls from the voice agent, and forwards the motion
+description to the UniAct MotionProxy.
 
 Standalone test mode (no real robot):
     python livekit_bridge.py
@@ -21,36 +21,11 @@ from livekit import api, rtc
 
 load_dotenv()
 
-# ---------------------------------------------------------------------------
-# Gesture name → UniAct text prompt mapping
-# ---------------------------------------------------------------------------
-
-GESTURE_PROMPTS: dict[str, str] = {
-    "shake_hand":    "extend right arm forward for a handshake",
-    "face_wave":     "wave right hand at face level",
-    "high_wave":     "raise both arms and wave enthusiastically",
-    "clap":          "clap both hands together",
-    "high_five":     "raise right hand high for a high five",
-    "hug":           "open both arms wide as if hugging someone",
-    "right_kiss":    "lean head gently to the right",
-    "left_kiss":     "lean head gently to the left",
-    "two_hand_kiss": "raise both hands and blow a kiss",
-    "hands_up":      "raise both hands above the head",
-    "right_hand_up": "raise right hand straight up",
-    "right_heart":   "make a heart shape gesture with both hands",
-    "x_ray":         "stand straight and raise right hand to volunteer",
-    "reject":        "wave hand side to side in refusal",
-    "release_hand":  "lower arms slowly and return to standing position",
-}
-
-
-# ---------------------------------------------------------------------------
-# Bridge
-# ---------------------------------------------------------------------------
 
 class LiveKitBridge:
     """
-    LiveKit participant that bridges Darwin RPC calls → UniAct motion prompts.
+    LiveKit participant that receives perform_motion RPC calls and forwards
+    them to the UniAct MotionProxy.
 
     Parameters
     ----------
@@ -62,7 +37,10 @@ class LiveKitBridge:
         Name of the LiveKit room to join.
     identity : str
         Participant identity — must match ROBOT_PARTICIPANT_IDENTITY in the
-        voice agent config (default: "robot123987").
+        voice agent config (default: "darwin").
+    on_prompt : callable, optional
+        Callback invoked with the text description whenever a new motion
+        prompt is received (used to update the video overlay).
     """
 
     def __init__(
@@ -72,7 +50,8 @@ class LiveKitBridge:
         api_key: str,
         api_secret: str,
         room_name: str,
-        identity: str = "robot123987",
+        identity: str = "darwin",
+        on_prompt=None,
     ):
         self.proxy = proxy
         self.livekit_url = livekit_url
@@ -80,31 +59,21 @@ class LiveKitBridge:
         self.api_secret = api_secret
         self.room_name = room_name
         self.identity = identity
+        self.on_prompt = on_prompt
         self.room: rtc.Room | None = None
 
     # ------------------------------------------------------------------
-    # RPC handlers
+    # RPC handler
     # ------------------------------------------------------------------
 
-    def _make_gesture_handler(self, gesture_name: str):
-        """Return an async RPC handler closure for the given gesture."""
-
-        async def handler(data: rtc.RpcInvocationData) -> str:
-            prompt = GESTURE_PROMPTS[gesture_name]
-            print(f"[LiveKitBridge] '{gesture_name}' → '{prompt}'")
-            self.proxy.send_start_command(prompt)
-            return json.dumps({
-                "status": "ok",
-                "gesture": gesture_name,
-                "prompt": prompt,
-            })
-
-        return handler
-
-    async def _handle_identify_person(self, data: rtc.RpcInvocationData) -> str:
-        """identify_person is a vision call — no motion generated."""
-        print("[LiveKitBridge] 'identify_person' received — returning empty list")
-        return json.dumps({"identities": []})
+    async def _handle_perform_motion(self, data: rtc.RpcInvocationData) -> str:
+        """perform_motion RPC — accepts any text description."""
+        description = data.payload
+        print(f"[LiveKitBridge] 'perform_motion' → '{description}'")
+        self.proxy.send_start_command(description)
+        if self.on_prompt:
+            self.on_prompt(description)
+        return json.dumps({"status": "ok", "prompt": description})
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -124,15 +93,9 @@ class LiveKitBridge:
 
         await self.room.connect(self.livekit_url, token)
 
-        for gesture_name in GESTURE_PROMPTS:
-            self.room.local_participant.register_rpc_method(
-                gesture_name,
-                self._make_gesture_handler(gesture_name),
-            )
-
         self.room.local_participant.register_rpc_method(
-            "identify_person",
-            self._handle_identify_person,
+            "perform_motion",
+            self._handle_perform_motion,
         )
 
         print(
@@ -189,9 +152,9 @@ async def _standalone_main() -> None:
         api_key=os.environ["LIVEKIT_API_KEY"],
         api_secret=os.environ["LIVEKIT_API_SECRET"],
         room_name=os.environ.get("ROOM_NAME", "darwin-robot"),
-        identity=os.environ.get("ROBOT_PARTICIPANT_IDENTITY", "robot123987"),
+        identity=os.environ.get("ROBOT_PARTICIPANT_IDENTITY", "darwin"),
     )
-    print("[LiveKitBridge] Standalone mode — waiting for RPC calls from Darwin...")
+    print("[LiveKitBridge] Standalone mode — waiting for perform_motion RPC calls...")
     await bridge.run_forever()
 
 

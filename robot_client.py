@@ -32,7 +32,7 @@ import mujoco
 import mujoco.viewer
 import imageio
 
-RECORD_VIDEO = True  # Set True for headless (AWS), False for local with display
+RECORD_VIDEO = False  # Set True for headless (AWS), False for local with display
 VIDEO_PATH = "simulation_output.mp4"
 VIDEO_FPS = 50
 
@@ -1381,7 +1381,8 @@ if __name__ == "__main__":
             api_key=os.environ["LIVEKIT_API_KEY"],
             api_secret=os.environ["LIVEKIT_API_SECRET"],
             room_name=os.environ.get("ROOM_NAME", "darwin-robot"),
-            identity=os.environ.get("ROBOT_PARTICIPANT_IDENTITY", "robot123987"),
+            identity=os.environ.get("ROBOT_PARTICIPANT_IDENTITY", "darwin"),
+            on_prompt=lambda text: setattr(dp_node, "current_prompt", text),
         )
         bridge.start_in_background()
 
