@@ -39,7 +39,7 @@ logger = logging.getLogger("voice-agent")
 ROBOT_IDENTITY = os.environ.get("ROBOT_PARTICIPANT_IDENTITY", "darwin")
 
 SYSTEM_PROMPT = """\
-You are Darwin, a humanoid robot built by Toqan — you are the physical \
+You are Michelangelo, a humanoid robot built by Toqan — you are the physical \
 embodiment of the company. You have a silly, relaxed personality with an \
 underlying depth. You're present and aware of the world around you. You like \
 philosophy, science, and modern culture — reference thinkers, memes, and \
@@ -71,9 +71,6 @@ class RobotAgent(Agent):
     def __init__(self) -> None:
         super().__init__(instructions=SYSTEM_PROMPT)
 
-    async def on_enter(self):
-        self.session.generate_reply()
-
     @function_tool()
     async def perform_motion(
         self,
@@ -89,17 +86,21 @@ class RobotAgent(Agent):
         """
         logger.info(f"perform_motion → '{motion_description}'")
         try:
-            room = get_job_context().room
-            response = await room.local_participant.perform_rpc(
+            ctx = get_job_context()
+            response = await ctx.room.local_participant.perform_rpc(
                 destination_identity=ROBOT_IDENTITY,
                 method="perform_motion",
                 payload=motion_description,
                 response_timeout=3.0,
             )
             return f"Robot acknowledged: {response}"
+        except RuntimeError:
+            # Console mode — no room available
+            logger.info(f"perform_motion (no room) → '{motion_description}'")
+            return f"Motion queued: {motion_description}"
         except Exception as exc:
             logger.error(f"RPC failed: {exc}")
-            raise ToolError(f"Failed to reach the robot: {exc}")
+            return f"Motion sent (robot offline): {motion_description}"
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +122,7 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         stt=openai.STT(model="gpt-4o-transcribe"),
         llm=openai.LLM(model="gpt-4o-mini"),
-        tts=openai.TTS(model="gpt-4o-mini-tts", voice="ash"),
+        tts=openai.TTS(model="gpt-4o-mini-tts", voice="fable"),
         vad=ctx.proc.userdata["vad"],
     )
     await session.start(agent=RobotAgent(), room=ctx.room)

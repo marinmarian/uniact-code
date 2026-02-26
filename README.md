@@ -218,14 +218,11 @@ Speak natural language commands through a browser. Requires LiveKit + OpenAI cre
 # Terminal A: Voice agent
 python livekit_voice_agent.py dev
 
-# Terminal B: Robot client + bridge
+# Terminal B: Robot client + bridge (auto-discovers playground room)
 mjpython robot_client.py --use_livekit
-
-# Terminal C: Generate token + dispatch agent
-python livekit_connect.py
 ```
 
-Open https://agents-playground.livekit.io, use Custom connect with the URL + token from `livekit_connect.py`, then speak commands like "wave hello" or "walk forward".
+Open https://agents-playground.livekit.io and connect. The robot bridge auto-joins the same room. Speak commands like "wave hello" or "walk forward".
 
 ### 5. Runtime Configuration Parameters
 

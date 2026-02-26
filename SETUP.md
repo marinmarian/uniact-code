@@ -103,12 +103,10 @@ python livekit_voice_agent.py dev
 ```bash
 mjpython robot_client.py --use_livekit
 ```
+The robot bridge auto-discovers the playground room — no manual room config needed.
 
-#### Terminal 5 — Connect browser to room (Mac)
-```bash
-python livekit_connect.py
-```
-Paste the URL + token into https://agents-playground.livekit.io (Custom connect), then speak.
+#### Browser — Connect via playground
+Go to https://agents-playground.livekit.io and connect. The robot will auto-join the same room.
 
 ---
 

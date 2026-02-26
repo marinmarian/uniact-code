@@ -31,11 +31,9 @@ MUJOCO_GL=egl python robot_client.py
 # Terminal 2: SSH tunnel: ssh -L 8000:localhost:8000 -i <key> ubuntu@<aws-ip>
 # Terminal 3: Voice agent (Mac or anywhere with OPENAI_API_KEY)
 python livekit_voice_agent.py dev
-# Terminal 4: Robot client + bridge (Mac)
+# Terminal 4: Robot client + bridge (auto-discovers playground room)
 mjpython robot_client.py --use_livekit
-# Terminal 5: Generate playground token + dispatch agent
-python livekit_connect.py
-# Browser: paste URL + token into https://agents-playground.livekit.io (Custom connect)
+# Browser: connect via https://agents-playground.livekit.io
 ```
 
 ### Distributed setup (server on AWS, client on Mac)

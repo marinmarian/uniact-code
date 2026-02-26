@@ -1380,7 +1380,7 @@ if __name__ == "__main__":
             livekit_url=os.environ["LIVEKIT_URL"],
             api_key=os.environ["LIVEKIT_API_KEY"],
             api_secret=os.environ["LIVEKIT_API_SECRET"],
-            room_name=os.environ.get("ROOM_NAME", "darwin-robot"),
+            room_name=os.environ.get("ROOM_NAME") or None,
             identity=os.environ.get("ROBOT_PARTICIPANT_IDENTITY", "darwin"),
             on_prompt=lambda text: setattr(dp_node, "current_prompt", text),
         )
