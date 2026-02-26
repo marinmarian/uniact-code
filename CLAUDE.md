@@ -69,8 +69,10 @@ proxy.py (buffer)   ← Token queue, sliding window, 40-frame interpolation on p
 robot_client.py     ← 50Hz: 151D obs → RL policy (policy.pt) → 29D action → PD control → MuJoCo 1kHz
 
 Voice agent flow (LiveKit mode):
-User (browser mic) → LiveKit Cloud → livekit_voice_agent.py (STT→LLM→TTS)
-    → perform_motion RPC → livekit_bridge.py → proxy.send_start_command() → server.py → MuJoCo
+User (browser/playground) → LiveKit Cloud → livekit_voice_agent.py (STT→GPT-4o→TTS)
+    → perform_motion RPC {motion, duration} → livekit_bridge.py (auto-discovers room)
+    → proxy.send_start_command() → server.py → MuJoCo
+    → after duration expires → "stand still" on repeat until next command
 ```
 
 ### Key data flow
@@ -89,9 +91,9 @@ Two orderings exist: **BYD** (training) and **MuJoCo** (simulation). Index mappi
 | `robot_client.py` | Main controller: G1 class (PD control, MuJoCo), DeployNode (50Hz loop) |
 | `server.py` | MotionServer: Qwen LLM inference, FSQ decode, TCP socket |
 | `proxy.py` | MotionProxy: token buffer, interpolation, queue management |
-| `livekit_voice_agent.py` | Voice pipeline agent: STT/LLM/TTS via OpenAI, perform_motion RPC tool |
-| `livekit_bridge.py` | LiveKitBridge: perform_motion RPC → proxy (daemon thread, asyncio) |
-| `livekit_connect.py` | Helper: generates playground token + dispatches agent to room |
+| `livekit_voice_agent.py` | Michelangelo voice agent: STT/LLM(GPT-4o)/TTS via OpenAI, perform_motion tool with duration |
+| `livekit_bridge.py` | LiveKitBridge: auto-discovers room, motion→idle loop, re-sends prompts to keep motion alive |
+| `livekit_connect.py` | Helper: dispatches voice agent to a room |
 | `infer_robot.py` | LLM inference utilities: KV-cache, special token handling (IDs start at 129,627) |
 | `infer_fsq_ar.py` | TokenDecoder: FSQ autoregressive decode with 8-code sliding window |
 | `fsq.py` | FSQ module: levels [8,8,8,6,5] = 15,360 codes, straight-through gradients |
