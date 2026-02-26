@@ -61,19 +61,63 @@ class LiveKitBridge:
         self.identity = identity
         self.on_prompt = on_prompt
         self.room: rtc.Room | None = None
+        self._motion_task: asyncio.Task | None = None
+        self._idle_prompt = "stand still"
+        self._motion_duration = 20.0   # seconds before returning to idle
+        self._idle_interval = 4.0     # re-send idle prompt every N seconds
+        self._repeat_interval = 5.0   # re-send active motion to keep it going
 
     # ------------------------------------------------------------------
     # RPC handler
     # ------------------------------------------------------------------
 
     async def _handle_perform_motion(self, data: rtc.RpcInvocationData) -> str:
-        """perform_motion RPC — accepts any text description."""
-        description = data.payload
-        print(f"[LiveKitBridge] 'perform_motion' → '{description}'")
+        """perform_motion RPC — accepts JSON with motion and duration."""
+        try:
+            msg = json.loads(data.payload)
+            description = msg["motion"]
+            duration = msg.get("duration", "short")
+        except (json.JSONDecodeError, KeyError):
+            # Fallback: plain text payload
+            description = data.payload
+            duration = "short"
+        seconds = 20.0 if duration == "long" else 5.0
+        print(f"[LiveKitBridge] 'perform_motion' → '{description}' ({duration}, {seconds}s)")
+        self._start_motion(description, seconds)
+        return json.dumps({"status": "ok", "prompt": description})
+
+    def _start_motion(self, description: str, duration: float = 5.0) -> None:
+        """Send motion prompt, then return to idle after duration seconds."""
+        if self._motion_task and not self._motion_task.done():
+            self._motion_task.cancel()
+
         self.proxy.send_start_command(description)
         if self.on_prompt:
             self.on_prompt(description)
-        return json.dumps({"status": "ok", "prompt": description})
+
+        loop = asyncio.get_event_loop()
+        self._motion_task = loop.create_task(self._motion_then_idle(description, duration))
+
+    async def _motion_then_idle(self, description: str, duration: float = 5.0) -> None:
+        """Keep motion alive while active, then switch to idle."""
+        try:
+            # Keep re-sending the motion prompt so it doesn't run out
+            elapsed = 0.0
+            while elapsed < duration:
+                await asyncio.sleep(self._repeat_interval)
+                elapsed += self._repeat_interval
+                if elapsed < duration:
+                    print(f"[LiveKitBridge] repeat → '{description}'")
+                    self.proxy.send_start_command(description)
+            # Switch to idle
+            print(f"[LiveKitBridge] motion done, switching to '{self._idle_prompt}'")
+            if self.on_prompt:
+                self.on_prompt(self._idle_prompt)
+            while True:
+                self.proxy.send_start_command(self._idle_prompt)
+                await asyncio.sleep(self._idle_interval)
+        except asyncio.CancelledError:
+            pass
 
     # ------------------------------------------------------------------
     # Room discovery
