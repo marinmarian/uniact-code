@@ -39,18 +39,19 @@ The key insight: the LLM generates "ideal" motion, but real physics requires cor
 ## Architecture: 3-Tier Pipeline
 
 ```
-                        ┌──────────────────┐
-                        │   Darwin Voice   │
-                        │      Agent       │
-                        └────────┬─────────┘
-                                 │ RPC (gesture name)
-                                 ▼
-                        ┌──────────────────┐
-  text.jsonl /          │  LiveKitBridge   │  (optional)
-  --use_commandline ──► │ (livekit_bridge) │
-                        └────────┬─────────┘
-                                 │ text prompt
-                                 ▼
+  User (browser mic)
+       │ audio
+       ▼
+  LiveKit Cloud
+       │
+       ▼
+  livekit_voice_agent.py        text.jsonl /
+  (STT → LLM → TTS)            --use_commandline
+       │ perform_motion RPC           │
+       ▼                              │
+  livekit_bridge.py ──────────────────┘
+       │ text prompt
+       ▼
 ┌─────────┐     TCP      ┌─────────┐     Local     ┌──────────────┐
 │  Server  │ ──────────── │  Proxy  │ ──────────── │ Robot Client  │
 │  (GPU)   │   tokens     │ (buffer)│   motion      │ (MuJoCo/HW)  │
@@ -64,14 +65,25 @@ The key insight: the LLM generates "ideal" motion, but real physics requires cor
 - Decodes tokens into joint pos/vel using FSQ quantizer + TorchScript decoder
 - Uses `infer_robot.py` for generation (KV-cache, position encoding, token parsing)
 
-### `livekit_bridge.py` — Darwin Voice Agent Bridge (Optional)
+### `livekit_voice_agent.py` — Voice Pipeline Agent
+- LiveKit Agents SDK (1.x) voice pipeline: STT (OpenAI Whisper) → LLM (GPT-4o-mini) → TTS (OpenAI)
+- Silero VAD for voice activity detection
+- Single function tool: `perform_motion(motion_description)` — sends RPC to the robot participant
+- Run with `python livekit_voice_agent.py dev`
+- Requires `OPENAI_API_KEY` in `.env`
+
+### `livekit_bridge.py` — Voice Agent Bridge
 - Joins a LiveKit room as the robot participant (`robot123987` by default)
-- Registers RPC method handlers for 15 gesture commands from the Darwin voice agent
-- Maps each gesture name to a UniAct text prompt (e.g. `shake_hand` → `"extend right arm forward for a handshake"`)
-- Calls `proxy.send_start_command(prompt)` to trigger motion — same path as command line / file mode
-- Also registers `identify_person` as a stub (returns empty identities list)
+- Registers `perform_motion` RPC handler — accepts free-form text descriptions
+- Calls `proxy.send_start_command(description)` to trigger motion
+- Calls `on_prompt` callback to update video overlay text
 - Runs in a daemon thread with its own asyncio event loop — does not block the main control loop
 - Credentials loaded from `.env` (gitignored)
+
+### `livekit_connect.py` — Connection Helper
+- Generates a playground token for the LiveKit room
+- Dispatches the voice agent to the room via LiveKit API
+- Run with `python livekit_connect.py`
 
 ### `proxy.py` — Token Buffer/Interpolator
 - Sits between server and client
@@ -390,9 +402,7 @@ python3 benchmark_t2m.py
 ## Flow Summary
 
 ```
-Text prompt (file / commandline / LiveKit gesture RPC)
-    ↓
-[LiveKitBridge] gesture name → text prompt   (optional path)
+Text prompt (file / commandline / voice agent RPC)
     ↓
 Proxy.send_start_command(prompt)
     ↓
@@ -414,7 +424,9 @@ uniact-code/
 ├── robot_client.py          # Main controller (50Hz loop, PD control, MuJoCo sim)
 ├── server.py                # LLM motion generation server (GPU)
 ├── proxy.py                 # Token buffer/interpolator between server & client
-├── livekit_bridge.py        # LiveKit ↔ UniAct bridge (Darwin voice agent integration)
+├── livekit_voice_agent.py   # Voice pipeline agent (STT/LLM/TTS → RPC)
+├── livekit_bridge.py        # LiveKit ↔ UniAct bridge (perform_motion RPC)
+├── livekit_connect.py       # Token generator + agent dispatcher
 ├── infer_robot.py           # Qwen inference utilities (KV-cache, token parsing)
 ├── infer_fsq_ar.py          # FSQ autoregressive decoder
 ├── fsq.py                   # Finite Scalar Quantization implementation
