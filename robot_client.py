@@ -40,6 +40,180 @@ import torch_jit_utils as _rot
 
 from proxy import MotionProxy
 import threading
+import struct
+import asyncio
+
+
+# ---------------------------------------------------------------------------
+# LiveKitMotionReceiver — drop-in replacement for MotionProxy when using
+# the unified agent's data channel (--use_livekit_data mode).
+# ---------------------------------------------------------------------------
+
+class LiveKitMotionReceiver:
+    """Receives binary motion frames from the unified agent via LiveKit data channel.
+
+    Implements the same interface as MotionProxy so it can be assigned to
+    ``dp_node.proxy`` without changing the control loop.
+
+    Binary frame format (236 bytes):
+        4-byte magic 'MF01' + 29 x float32 dof_pos + 29 x float32 dof_vel
+    """
+
+    FRAME_MAGIC = b"MF01"
+    FRAME_SIZE = 4 + 29 * 4 + 29 * 4  # 236 bytes
+
+    def __init__(self, config: dict):
+        self.config = config
+        self._frame_queue: deque = deque()
+        self._lock = threading.Lock()
+        self._connected = False
+        self._room = None
+        self._loop = None
+        self._thread = None
+        self._ready_threshold = config.get("ready_threshold", 30)
+
+    def connect(self) -> bool:
+        """Join the LiveKit room and subscribe to the 'motion' data channel."""
+        try:
+            from livekit import api, rtc
+        except ImportError:
+            print("[LiveKitMotionReceiver] livekit SDK not installed")
+            return False
+
+        livekit_url = os.environ.get("LIVEKIT_URL")
+        api_key = os.environ.get("LIVEKIT_API_KEY")
+        api_secret = os.environ.get("LIVEKIT_API_SECRET")
+        identity = os.environ.get("ROBOT_PARTICIPANT_IDENTITY", "darwin")
+
+        if not all([livekit_url, api_key, api_secret]):
+            print("[LiveKitMotionReceiver] Missing LIVEKIT_URL / API_KEY / API_SECRET")
+            return False
+
+        self._livekit_url = livekit_url
+        self._api_key = api_key
+        self._api_secret = api_secret
+        self._identity = identity
+
+        # Start background thread with asyncio loop
+        self._thread = threading.Thread(
+            target=self._run_loop, daemon=True, name="livekit-motion-receiver"
+        )
+        self._thread.start()
+
+        # Wait for connection (max 60s)
+        deadline = time.monotonic() + 60
+        while not self._connected and time.monotonic() < deadline:
+            time.sleep(0.5)
+
+        if not self._connected:
+            print("[LiveKitMotionReceiver] Timeout waiting for room connection")
+            return False
+
+        return True
+
+    def _run_loop(self):
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        try:
+            self._loop.run_until_complete(self._async_connect())
+        except Exception as exc:
+            print(f"[LiveKitMotionReceiver] Fatal: {exc}")
+        finally:
+            self._loop.close()
+
+    async def _async_connect(self):
+        from livekit import api, rtc
+
+        # Auto-discover room (same logic as livekit_bridge.py)
+        room_name = os.environ.get("ROOM_NAME") or None
+        if not room_name:
+            room_name = await self._discover_room()
+
+        # Generate access token
+        token = (
+            api.AccessToken(self._api_key, self._api_secret)
+            .with_identity(self._identity)
+            .with_name("Michelangelo Robot")
+            .with_grants(api.VideoGrants(room_join=True, room=room_name))
+            .to_jwt()
+        )
+
+        self._room = rtc.Room()
+
+        # Subscribe to data channel
+        def _on_data(packet):
+            if packet.topic == "motion" and len(packet.data) == self.FRAME_SIZE:
+                if packet.data[:4] == self.FRAME_MAGIC:
+                    dof_pos = list(struct.unpack("<29f", packet.data[4:120]))
+                    dof_vel = list(struct.unpack("<29f", packet.data[120:236]))
+                    frame = {"dof_pos": dof_pos, "dof_vel": dof_vel}
+                    with self._lock:
+                        self._frame_queue.append(frame)
+
+        self._room.on("data_received", _on_data)
+
+        await self._room.connect(self._livekit_url, token)
+        self._connected = True
+        print(f"[LiveKitMotionReceiver] Connected to room '{room_name}' as '{self._identity}'")
+
+        # Keep alive
+        try:
+            while True:
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            await self._room.disconnect()
+
+    async def _discover_room(self) -> str:
+        """Poll LiveKit API until a room with 2+ participants appears."""
+        from livekit import api
+
+        lk = api.LiveKitAPI(self._livekit_url, self._api_key, self._api_secret)
+        try:
+            while True:
+                resp = await lk.room.list_rooms(api.ListRoomsRequest())
+                best = None
+                for r in resp.rooms:
+                    if r.num_participants > 0:
+                        if best is None or r.num_participants > best.num_participants:
+                            best = r
+                if best and best.num_participants >= 2:
+                    print(
+                        f"[LiveKitMotionReceiver] Discovered room '{best.name}' "
+                        f"({best.num_participants} participants)"
+                    )
+                    return best.name
+                print("[LiveKitMotionReceiver] Waiting for active room (need user + agent)...")
+                await asyncio.sleep(3)
+        finally:
+            await lk.aclose()
+
+    # ------------------------------------------------------------------
+    # MotionProxy-compatible interface
+    # ------------------------------------------------------------------
+
+    def ready(self) -> bool:
+        with self._lock:
+            return self._connected and len(self._frame_queue) >= self._ready_threshold
+
+    def get_motion_state(self) -> dict | None:
+        with self._lock:
+            if self._frame_queue:
+                return self._frame_queue.popleft()
+            return None
+
+    def start_input_listener(self):
+        """No-op — input comes from the unified agent, not CLI."""
+        pass
+
+    def send_start_command(self, prompt: str):
+        """No-op — generation is controlled by the unified agent."""
+        pass
+
+    def cleanup(self):
+        if self._room and self._loop:
+            asyncio.run_coroutine_threadsafe(self._room.disconnect(), self._loop)
 
 
 # ==================== Global Constant Configuration ====================
@@ -1331,13 +1505,23 @@ if __name__ == "__main__":
         help='Receive motion commands from Darwin voice agent via LiveKit RPC',
         default=False
     )
+    parser.add_argument(
+        '--use_livekit_data',
+        action='store_true',
+        help='Receive motion frames from unified agent via LiveKit data channel (no TCP/proxy)',
+        default=False
+    )
     args = parser.parse_args()
     
     # Determine which mode to use:
     # If both parameters are specified, command line mode takes priority
     # If neither is specified, default to file mode
     use_livekit = args.use_livekit
-    if use_livekit:
+    use_livekit_data = args.use_livekit_data
+    if use_livekit_data:
+        use_text_file = False
+        print("[Config] Using LiveKit data channel mode (unified agent)")
+    elif use_livekit:
         use_text_file = False
         print("[Config] Using LiveKit RPC mode (Darwin voice agent)")
     elif args.use_commandline:
@@ -1364,13 +1548,22 @@ if __name__ == "__main__":
     }
     # Create deployment node
     dp_node = DeployNode(args.task_name, config=config)
-    try:
-        # Connect to proxy
-        if not dp_node.connect():
-            print("Failed to connect to proxy")
-            raise Exception(f"Failed to connect to proxy")
-    except Exception as e:
-        print(f"Client error: {e}")
+
+    if use_livekit_data:
+        # Replace proxy with LiveKitMotionReceiver (no TCP connection needed)
+        receiver = LiveKitMotionReceiver(config)
+        dp_node.proxy = receiver
+        if not receiver.connect():
+            print("Failed to connect LiveKit motion receiver")
+            sys.exit(1)
+    else:
+        try:
+            # Connect to proxy
+            if not dp_node.connect():
+                print("Failed to connect to proxy")
+                raise Exception(f"Failed to connect to proxy")
+        except Exception as e:
+            print(f"Client error: {e}")
 
     # Start LiveKit bridge in background if requested
     if use_livekit:
